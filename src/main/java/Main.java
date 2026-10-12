@@ -1,14 +1,11 @@
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
-import java.util.Map;
 
 public class Main {
   public static void main(String[] args) {
@@ -42,8 +39,8 @@ public class Main {
 
   private static void handleClient(Socket clientSocket, String directory) {
     try {
-      BufferedReader reader = new BufferedReader(new InputStreamReader(clientSocket.getInputStream(), StandardCharsets.UTF_8));
-      String requestLine = reader.readLine();
+      InputStream inputStream = clientSocket.getInputStream();
+      String requestLine = readLine(inputStream);
       String path = getPathFromRequestLine(requestLine);
 
       String status = "404 Not Found";
@@ -59,7 +56,7 @@ public class Main {
       } else if ("GET".equals(method) && "/user-agent".equals(path)) {
         status = "200 OK";
         String line;
-        while ((line = reader.readLine()) != null && !line.isEmpty()) {
+        while (!"".equals(line = readLine(inputStream))) {
           if (line.startsWith("User-Agent:")) {
             responseBody = line.substring("User-Agent:".length()).trim();
             break;
@@ -79,9 +76,9 @@ public class Main {
             responseBody = "";
           }
         } else if ("POST".equals(method)) {
-          int contentLength = getContentLength(reader);
-          String requestBody = readBody(reader, contentLength);
-          Files.write(filePath, requestBody.getBytes(StandardCharsets.UTF_8));
+          int contentLength = getContentLength(inputStream);
+          byte[] requestBodyBytes = readBody(inputStream, contentLength);
+          Files.write(filePath, requestBodyBytes);
           status = "201 Created";
           responseBody = "";
         }
@@ -131,9 +128,34 @@ public class Main {
     return "";
   }
 
-  private static int getContentLength(BufferedReader reader) throws IOException {
+  private static String readLine(InputStream inputStream) throws IOException {
+    StringBuilder line = new StringBuilder();
+    while (true) {
+      int byteValue = inputStream.read();
+      if (byteValue == -1) {
+        return line.length() == 0 ? null : line.toString();
+      }
+      if (byteValue == '\r') {
+        int next = inputStream.read();
+        if (next == '\n') {
+          return line.toString();
+        }
+        line.append((char) byteValue);
+        if (next != -1) {
+          line.append((char) next);
+        }
+        continue;
+      }
+      if (byteValue == '\n') {
+        return line.toString();
+      }
+      line.append((char) byteValue);
+    }
+  }
+
+  private static int getContentLength(InputStream inputStream) throws IOException {
     String line;
-    while ((line = reader.readLine()) != null && !line.isEmpty()) {
+    while (!"".equals(line = readLine(inputStream))) {
       if (line.startsWith("Content-Length:")) {
         return Integer.parseInt(line.substring("Content-Length:".length()).trim());
       }
@@ -141,16 +163,16 @@ public class Main {
     return 0;
   }
 
-  private static String readBody(BufferedReader reader, int contentLength) throws IOException {
-    char[] buffer = new char[contentLength];
+  private static byte[] readBody(InputStream inputStream, int contentLength) throws IOException {
+    byte[] buffer = new byte[contentLength];
     int totalRead = 0;
     while (totalRead < contentLength) {
-      int read = reader.read(buffer, totalRead, contentLength - totalRead);
+      int read = inputStream.read(buffer, totalRead, contentLength - totalRead);
       if (read == -1) {
         break;
       }
       totalRead += read;
     }
-    return new String(buffer, 0, totalRead);
+    return java.util.Arrays.copyOf(buffer, totalRead);
   }
 }
