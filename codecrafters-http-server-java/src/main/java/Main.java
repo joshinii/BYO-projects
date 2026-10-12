@@ -56,7 +56,7 @@ public class Main {
         Map<String, String> headers = readHeaders(inputStream);
 
         RequestContext context = new RequestContext(method, path, headers, directory, inputStream);
-        Response response = buildResponse(context);
+        Response response = buildResponse(context, headers);
 
         outputStream.write(response.toBytes());
         outputStream.flush();
@@ -73,7 +73,7 @@ public class Main {
     }
   }
 
-  private static Response buildResponse(RequestContext context) throws IOException {
+  private static Response buildResponse(RequestContext context, Map<String, String> requestHeaders) throws IOException {
     String status = "404 Not Found";
     String responseBody = "";
     String contentType = "text/plain";
@@ -86,7 +86,7 @@ public class Main {
       responseBody = context.path.substring("/echo/".length());
     } else if ("GET".equals(context.method) && "/user-agent".equals(context.path)) {
       status = "200 OK";
-      responseBody = context.headers.getOrDefault("user-agent", "");
+      responseBody = requestHeaders.getOrDefault("user-agent", "");
     } else if (context.path.startsWith("/files/")) {
       String fileName = context.path.substring("/files/".length());
       Path filePath = Path.of(context.directory, fileName);
@@ -98,7 +98,7 @@ public class Main {
           contentType = "application/octet-stream";
         }
       } else if ("POST".equals(context.method)) {
-        int contentLength = getContentLength(context.headers);
+        int contentLength = getContentLength(requestHeaders);
         byte[] requestBodyBytes = readBody(context.inputStream, contentLength);
         Files.write(filePath, requestBodyBytes);
         status = "201 Created";
@@ -106,7 +106,7 @@ public class Main {
     }
 
     byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
-    String acceptEncoding = context.headers.getOrDefault("accept-encoding", "");
+    String acceptEncoding = requestHeaders.getOrDefault("accept-encoding", "");
     if (acceptEncoding.toLowerCase().contains("gzip")) {
       contentEncoding = "gzip";
       bodyBytes = gzip(bodyBytes);
@@ -119,16 +119,23 @@ public class Main {
       return new Response("HTTP/1.1 201 Created\r\n\r\n");
     }
 
-    return new Response(buildHeaders(status, contentType, contentEncoding, bodyBytes.length), bodyBytes);
+    if ("close".equalsIgnoreCase(requestHeaders.get("connection"))) {
+      return new Response(buildHeaders(status, contentType, contentEncoding, bodyBytes.length, true), bodyBytes);
+    }
+
+    return new Response(buildHeaders(status, contentType, contentEncoding, bodyBytes.length, false), bodyBytes);
   }
 
-  private static byte[] buildHeaders(String status, String contentType, String contentEncoding, int contentLength) {
+  private static byte[] buildHeaders(String status, String contentType, String contentEncoding, int contentLength, boolean closeConnection) {
     StringBuilder headersBuilder = new StringBuilder();
     headersBuilder.append("HTTP/1.1 ").append(status).append("\r\n");
     headersBuilder.append("Content-Type: ").append(contentType).append("\r\n");
     headersBuilder.append("Content-Length: ").append(contentLength).append("\r\n");
     if (!contentEncoding.isEmpty()) {
       headersBuilder.append("Content-Encoding: ").append(contentEncoding).append("\r\n");
+    }
+    if (closeConnection) {
+      headersBuilder.append("Connection: close\r\n");
     }
     headersBuilder.append("\r\n");
     return headersBuilder.toString().getBytes(StandardCharsets.UTF_8);
