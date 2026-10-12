@@ -49,6 +49,8 @@ public class Main {
       String contentType = "text/plain";
       String method = getMethodFromRequestLine(requestLine);
       Map<String, String> headers = readHeaders(inputStream);
+      String contentEncoding = "";
+      String acceptEncoding = headers.getOrDefault("accept-encoding", "");
 
       if ("GET".equals(method) && "/".equals(path)) {
         status = "200 OK";
@@ -80,11 +82,21 @@ public class Main {
         }
       }
 
+      if ("gzip".equalsIgnoreCase(acceptEncoding) || acceptEncoding.toLowerCase().contains("gzip")) {
+        contentEncoding = "gzip";
+      }
+
       byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
-      String response = "HTTP/1.1 " + status + "\r\n" +
-          "Content-Type: " + contentType + "\r\n" +
-          "Content-Length: " + bodyBytes.length + "\r\n\r\n" +
-          responseBody;
+      StringBuilder headersBuilder = new StringBuilder();
+      headersBuilder.append("HTTP/1.1 ").append(status).append("\r\n");
+      headersBuilder.append("Content-Type: ").append(contentType).append("\r\n");
+      headersBuilder.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
+      if (!contentEncoding.isEmpty()) {
+        headersBuilder.append("Content-Encoding: ").append(contentEncoding).append("\r\n");
+      }
+      headersBuilder.append("\r\n");
+
+      String response = headersBuilder + responseBody;
 
       if ("404 Not Found".equals(status) && responseBody.isEmpty()) {
         response = "HTTP/1.1 404 Not Found\r\n\r\n";
