@@ -1,3 +1,4 @@
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -7,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.zip.GZIPOutputStream;
 
 public class Main {
   public static void main(String[] args) {
@@ -82,11 +84,12 @@ public class Main {
         }
       }
 
+      byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
       if ("gzip".equalsIgnoreCase(acceptEncoding) || acceptEncoding.toLowerCase().contains("gzip")) {
         contentEncoding = "gzip";
+        bodyBytes = gzip(bodyBytes);
       }
 
-      byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
       StringBuilder headersBuilder = new StringBuilder();
       headersBuilder.append("HTTP/1.1 ").append(status).append("\r\n");
       headersBuilder.append("Content-Type: ").append(contentType).append("\r\n");
@@ -96,16 +99,19 @@ public class Main {
       }
       headersBuilder.append("\r\n");
 
-      String response = headersBuilder + responseBody;
+      byte[] responseBytes = headersBuilder.toString().getBytes(StandardCharsets.UTF_8);
+      byte[] fullResponse = new byte[responseBytes.length + bodyBytes.length];
+      System.arraycopy(responseBytes, 0, fullResponse, 0, responseBytes.length);
+      System.arraycopy(bodyBytes, 0, fullResponse, responseBytes.length, bodyBytes.length);
 
       if ("404 Not Found".equals(status) && responseBody.isEmpty()) {
-        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        fullResponse = "HTTP/1.1 404 Not Found\r\n\r\n".getBytes(StandardCharsets.UTF_8);
       } else if ("201 Created".equals(status) && responseBody.isEmpty()) {
-        response = "HTTP/1.1 201 Created\r\n\r\n";
+        fullResponse = "HTTP/1.1 201 Created\r\n\r\n".getBytes(StandardCharsets.UTF_8);
       }
 
       OutputStream outputStream = clientSocket.getOutputStream();
-      outputStream.write(response.getBytes(StandardCharsets.UTF_8));
+      outputStream.write(fullResponse);
       outputStream.flush();
       clientSocket.close();
       System.out.println("accepted new connection");
@@ -194,5 +200,13 @@ public class Main {
       totalRead += read;
     }
     return java.util.Arrays.copyOf(buffer, totalRead);
+  }
+
+  private static byte[] gzip(byte[] input) throws IOException {
+    ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+    try (GZIPOutputStream gzipOutputStream = new GZIPOutputStream(outputStream)) {
+      gzipOutputStream.write(input);
+    }
+    return outputStream.toByteArray();
   }
 }
