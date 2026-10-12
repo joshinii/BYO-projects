@@ -6,6 +6,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 public class Main {
   public static void main(String[] args) {
@@ -47,6 +48,7 @@ public class Main {
       String responseBody = "";
       String contentType = "text/plain";
       String method = getMethodFromRequestLine(requestLine);
+      Map<String, String> headers = readHeaders(inputStream);
 
       if ("GET".equals(method) && "/".equals(path)) {
         status = "200 OK";
@@ -55,13 +57,7 @@ public class Main {
         responseBody = path.substring("/echo/".length());
       } else if ("GET".equals(method) && "/user-agent".equals(path)) {
         status = "200 OK";
-        String line;
-        while (!"".equals(line = readLine(inputStream))) {
-          if (line.startsWith("User-Agent:")) {
-            responseBody = line.substring("User-Agent:".length()).trim();
-            break;
-          }
-        }
+        responseBody = headers.getOrDefault("user-agent", "");
       } else if (path.startsWith("/files/")) {
         String fileName = path.substring("/files/".length());
         Path filePath = Path.of(directory, fileName);
@@ -76,7 +72,7 @@ public class Main {
             responseBody = "";
           }
         } else if ("POST".equals(method)) {
-          int contentLength = getContentLength(inputStream);
+          int contentLength = getContentLength(headers);
           byte[] requestBodyBytes = readBody(inputStream, contentLength);
           Files.write(filePath, requestBodyBytes);
           status = "201 Created";
@@ -128,6 +124,28 @@ public class Main {
     return "";
   }
 
+  private static Map<String, String> readHeaders(InputStream inputStream) throws IOException {
+    Map<String, String> headers = new java.util.HashMap<>();
+    String line;
+    while ((line = readLine(inputStream)) != null && !line.isEmpty()) {
+      int colonIndex = line.indexOf(':');
+      if (colonIndex != -1) {
+        String key = line.substring(0, colonIndex).trim().toLowerCase();
+        String value = line.substring(colonIndex + 1).trim();
+        headers.put(key, value);
+      }
+    }
+    return headers;
+  }
+
+  private static int getContentLength(Map<String, String> headers) {
+    String value = headers.get("content-length");
+    if (value == null) {
+      return 0;
+    }
+    return Integer.parseInt(value.trim());
+  }
+
   private static String readLine(InputStream inputStream) throws IOException {
     StringBuilder line = new StringBuilder();
     while (true) {
@@ -151,16 +169,6 @@ public class Main {
       }
       line.append((char) byteValue);
     }
-  }
-
-  private static int getContentLength(InputStream inputStream) throws IOException {
-    String line;
-    while (!"".equals(line = readLine(inputStream))) {
-      if (line.startsWith("Content-Length:")) {
-        return Integer.parseInt(line.substring("Content-Length:".length()).trim());
-      }
-    }
-    return 0;
   }
 
   private static byte[] readBody(InputStream inputStream, int contentLength) throws IOException {
