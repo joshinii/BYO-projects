@@ -7,6 +7,8 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
 
 public class Main {
   public static void main(String[] args) {
@@ -47,13 +49,14 @@ public class Main {
       String status = "404 Not Found";
       String responseBody = "";
       String contentType = "text/plain";
+      String method = getMethodFromRequestLine(requestLine);
 
-      if ("/".equals(path)) {
+      if ("GET".equals(method) && "/".equals(path)) {
         status = "200 OK";
-      } else if (path.startsWith("/echo/")) {
+      } else if ("GET".equals(method) && path.startsWith("/echo/")) {
         status = "200 OK";
         responseBody = path.substring("/echo/".length());
-      } else if ("/user-agent".equals(path)) {
+      } else if ("GET".equals(method) && "/user-agent".equals(path)) {
         status = "200 OK";
         String line;
         while ((line = reader.readLine()) != null && !line.isEmpty()) {
@@ -65,12 +68,21 @@ public class Main {
       } else if (path.startsWith("/files/")) {
         String fileName = path.substring("/files/".length());
         Path filePath = Path.of(directory, fileName);
-        if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
-          status = "200 OK";
-          responseBody = new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8);
-          contentType = "application/octet-stream";
-        } else {
-          status = "404 Not Found";
+
+        if ("GET".equals(method)) {
+          if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
+            status = "200 OK";
+            responseBody = new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8);
+            contentType = "application/octet-stream";
+          } else {
+            status = "404 Not Found";
+            responseBody = "";
+          }
+        } else if ("POST".equals(method)) {
+          int contentLength = getContentLength(reader);
+          String requestBody = readBody(reader, contentLength);
+          Files.write(filePath, requestBody.getBytes(StandardCharsets.UTF_8));
+          status = "201 Created";
           responseBody = "";
         }
       }
@@ -83,6 +95,8 @@ public class Main {
 
       if ("404 Not Found".equals(status) && responseBody.isEmpty()) {
         response = "HTTP/1.1 404 Not Found\r\n\r\n";
+      } else if ("201 Created".equals(status) && responseBody.isEmpty()) {
+        response = "HTTP/1.1 201 Created\r\n\r\n";
       }
 
       OutputStream outputStream = clientSocket.getOutputStream();
@@ -95,6 +109,17 @@ public class Main {
     }
   }
 
+  private static String getMethodFromRequestLine(String requestLine) {
+    if (requestLine == null) {
+      return "";
+    }
+    String[] parts = requestLine.split(" ");
+    if (parts.length >= 2) {
+      return parts[0];
+    }
+    return "";
+  }
+
   private static String getPathFromRequestLine(String requestLine) {
     if (requestLine == null) {
       return "";
@@ -104,5 +129,28 @@ public class Main {
       return parts[1];
     }
     return "";
+  }
+
+  private static int getContentLength(BufferedReader reader) throws IOException {
+    String line;
+    while ((line = reader.readLine()) != null && !line.isEmpty()) {
+      if (line.startsWith("Content-Length:")) {
+        return Integer.parseInt(line.substring("Content-Length:".length()).trim());
+      }
+    }
+    return 0;
+  }
+
+  private static String readBody(BufferedReader reader, int contentLength) throws IOException {
+    char[] buffer = new char[contentLength];
+    int totalRead = 0;
+    while (totalRead < contentLength) {
+      int read = reader.read(buffer, totalRead, contentLength - totalRead);
+      if (read == -1) {
+        break;
+      }
+      totalRead += read;
+    }
+    return new String(buffer, 0, totalRead);
   }
 }
