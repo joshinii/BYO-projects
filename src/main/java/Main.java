@@ -6,8 +6,6 @@ public class Main {
   public static void main(String[] args) {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     System.out.println("Logs from your program will appear here!");
-
-    // TODO: Uncomment the code below to pass the first stage
     //
     try {
       ServerSocket serverSocket = new ServerSocket(4221);
@@ -16,7 +14,8 @@ public class Main {
       // ensures that we don't run into 'Address already in use' errors
       serverSocket.setReuseAddress(true);
     
-      serverSocket.accept(); // Wait for connection from client.
+      Socket clientSocket = serverSocket.accept(); // Wait for connection from client.
+      clientSocket.getOutputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes());
       System.out.println("accepted new connection");
     } catch (IOException e) {
       System.out.println("IOException: " + e.getMessage());
