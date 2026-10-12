@@ -12,26 +12,17 @@ import java.util.zip.GZIPOutputStream;
 
 public class Main {
   public static void main(String[] args) {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
     System.out.println("Logs from your program will appear here!");
 
-    String directory = ".";
-    for (int i = 0; i < args.length; i++) {
-      if ("--directory".equals(args[i]) && i + 1 < args.length) {
-        directory = args[i + 1];
-      }
-    }
+    String directory = getDirectoryFromArgs(args);
 
     try {
       ServerSocket serverSocket = new ServerSocket(4221);
-
-      // Since the tester restarts your program quite often, setting SO_REUSEADDR
-      // ensures that we don't run into 'Address already in use' errors
       serverSocket.setReuseAddress(true);
 
       while (true) {
         Socket clientSocket = serverSocket.accept();
-        final String rootDirectory = directory;
+        String rootDirectory = directory;
         Thread clientThread = new Thread(() -> handleClient(clientSocket, rootDirectory));
         clientThread.start();
       }
@@ -40,78 +31,28 @@ public class Main {
     }
   }
 
+  private static String getDirectoryFromArgs(String[] args) {
+    for (int i = 0; i < args.length; i++) {
+      if ("--directory".equals(args[i]) && i + 1 < args.length) {
+        return args[i + 1];
+      }
+    }
+    return ".";
+  }
+
   private static void handleClient(Socket clientSocket, String directory) {
     try {
       InputStream inputStream = clientSocket.getInputStream();
       String requestLine = readLine(inputStream);
-      String path = getPathFromRequestLine(requestLine);
-
-      String status = "404 Not Found";
-      String responseBody = "";
-      String contentType = "text/plain";
       String method = getMethodFromRequestLine(requestLine);
+      String path = getPathFromRequestLine(requestLine);
       Map<String, String> headers = readHeaders(inputStream);
-      String contentEncoding = "";
-      String acceptEncoding = headers.getOrDefault("accept-encoding", "");
 
-      if ("GET".equals(method) && "/".equals(path)) {
-        status = "200 OK";
-      } else if ("GET".equals(method) && path.startsWith("/echo/")) {
-        status = "200 OK";
-        responseBody = path.substring("/echo/".length());
-      } else if ("GET".equals(method) && "/user-agent".equals(path)) {
-        status = "200 OK";
-        responseBody = headers.getOrDefault("user-agent", "");
-      } else if (path.startsWith("/files/")) {
-        String fileName = path.substring("/files/".length());
-        Path filePath = Path.of(directory, fileName);
-
-        if ("GET".equals(method)) {
-          if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
-            status = "200 OK";
-            responseBody = new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8);
-            contentType = "application/octet-stream";
-          } else {
-            status = "404 Not Found";
-            responseBody = "";
-          }
-        } else if ("POST".equals(method)) {
-          int contentLength = getContentLength(headers);
-          byte[] requestBodyBytes = readBody(inputStream, contentLength);
-          Files.write(filePath, requestBodyBytes);
-          status = "201 Created";
-          responseBody = "";
-        }
-      }
-
-      byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
-      if ("gzip".equalsIgnoreCase(acceptEncoding) || acceptEncoding.toLowerCase().contains("gzip")) {
-        contentEncoding = "gzip";
-        bodyBytes = gzip(bodyBytes);
-      }
-
-      StringBuilder headersBuilder = new StringBuilder();
-      headersBuilder.append("HTTP/1.1 ").append(status).append("\r\n");
-      headersBuilder.append("Content-Type: ").append(contentType).append("\r\n");
-      headersBuilder.append("Content-Length: ").append(bodyBytes.length).append("\r\n");
-      if (!contentEncoding.isEmpty()) {
-        headersBuilder.append("Content-Encoding: ").append(contentEncoding).append("\r\n");
-      }
-      headersBuilder.append("\r\n");
-
-      byte[] responseBytes = headersBuilder.toString().getBytes(StandardCharsets.UTF_8);
-      byte[] fullResponse = new byte[responseBytes.length + bodyBytes.length];
-      System.arraycopy(responseBytes, 0, fullResponse, 0, responseBytes.length);
-      System.arraycopy(bodyBytes, 0, fullResponse, responseBytes.length, bodyBytes.length);
-
-      if ("404 Not Found".equals(status) && responseBody.isEmpty()) {
-        fullResponse = "HTTP/1.1 404 Not Found\r\n\r\n".getBytes(StandardCharsets.UTF_8);
-      } else if ("201 Created".equals(status) && responseBody.isEmpty()) {
-        fullResponse = "HTTP/1.1 201 Created\r\n\r\n".getBytes(StandardCharsets.UTF_8);
-      }
+      RequestContext context = new RequestContext(method, path, headers, directory, inputStream);
+      Response response = buildResponse(context);
 
       OutputStream outputStream = clientSocket.getOutputStream();
-      outputStream.write(fullResponse);
+      outputStream.write(response.toBytes());
       outputStream.flush();
       clientSocket.close();
       System.out.println("accepted new connection");
@@ -120,15 +61,73 @@ public class Main {
     }
   }
 
+  private static Response buildResponse(RequestContext context) throws IOException {
+    String status = "404 Not Found";
+    String responseBody = "";
+    String contentType = "text/plain";
+    String contentEncoding = "";
+
+    if ("GET".equals(context.method) && "/".equals(context.path)) {
+      status = "200 OK";
+    } else if ("GET".equals(context.method) && context.path.startsWith("/echo/")) {
+      status = "200 OK";
+      responseBody = context.path.substring("/echo/".length());
+    } else if ("GET".equals(context.method) && "/user-agent".equals(context.path)) {
+      status = "200 OK";
+      responseBody = context.headers.getOrDefault("user-agent", "");
+    } else if (context.path.startsWith("/files/")) {
+      String fileName = context.path.substring("/files/".length());
+      Path filePath = Path.of(context.directory, fileName);
+
+      if ("GET".equals(context.method)) {
+        if (Files.exists(filePath) && Files.isRegularFile(filePath)) {
+          status = "200 OK";
+          responseBody = new String(Files.readAllBytes(filePath), StandardCharsets.UTF_8);
+          contentType = "application/octet-stream";
+        }
+      } else if ("POST".equals(context.method)) {
+        int contentLength = getContentLength(context.headers);
+        byte[] requestBodyBytes = readBody(context.inputStream, contentLength);
+        Files.write(filePath, requestBodyBytes);
+        status = "201 Created";
+      }
+    }
+
+    byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
+    String acceptEncoding = context.headers.getOrDefault("accept-encoding", "");
+    if (acceptEncoding.toLowerCase().contains("gzip")) {
+      contentEncoding = "gzip";
+      bodyBytes = gzip(bodyBytes);
+    }
+
+    if ("404 Not Found".equals(status) && responseBody.isEmpty()) {
+      return new Response("HTTP/1.1 404 Not Found\r\n\r\n");
+    }
+    if ("201 Created".equals(status) && responseBody.isEmpty()) {
+      return new Response("HTTP/1.1 201 Created\r\n\r\n");
+    }
+
+    return new Response(buildHeaders(status, contentType, contentEncoding, bodyBytes.length), bodyBytes);
+  }
+
+  private static byte[] buildHeaders(String status, String contentType, String contentEncoding, int contentLength) {
+    StringBuilder headersBuilder = new StringBuilder();
+    headersBuilder.append("HTTP/1.1 ").append(status).append("\r\n");
+    headersBuilder.append("Content-Type: ").append(contentType).append("\r\n");
+    headersBuilder.append("Content-Length: ").append(contentLength).append("\r\n");
+    if (!contentEncoding.isEmpty()) {
+      headersBuilder.append("Content-Encoding: ").append(contentEncoding).append("\r\n");
+    }
+    headersBuilder.append("\r\n");
+    return headersBuilder.toString().getBytes(StandardCharsets.UTF_8);
+  }
+
   private static String getMethodFromRequestLine(String requestLine) {
     if (requestLine == null) {
       return "";
     }
     String[] parts = requestLine.split(" ");
-    if (parts.length >= 2) {
-      return parts[0];
-    }
-    return "";
+    return parts.length >= 2 ? parts[0] : "";
   }
 
   private static String getPathFromRequestLine(String requestLine) {
@@ -136,10 +135,7 @@ public class Main {
       return "";
     }
     String[] parts = requestLine.split(" ");
-    if (parts.length >= 2) {
-      return parts[1];
-    }
-    return "";
+    return parts.length >= 2 ? parts[1] : "";
   }
 
   private static Map<String, String> readHeaders(InputStream inputStream) throws IOException {
@@ -208,5 +204,43 @@ public class Main {
       gzipOutputStream.write(input);
     }
     return outputStream.toByteArray();
+  }
+
+  private static final class RequestContext {
+    final String method;
+    final String path;
+    final Map<String, String> headers;
+    final String directory;
+    final InputStream inputStream;
+
+    private RequestContext(String method, String path, Map<String, String> headers, String directory, InputStream inputStream) {
+      this.method = method;
+      this.path = path;
+      this.headers = headers;
+      this.directory = directory;
+      this.inputStream = inputStream;
+    }
+  }
+
+  private static final class Response {
+    private final byte[] headers;
+    private final byte[] body;
+
+    private Response(String rawResponse) {
+      this.headers = rawResponse.getBytes(StandardCharsets.UTF_8);
+      this.body = new byte[0];
+    }
+
+    private Response(byte[] headers, byte[] body) {
+      this.headers = headers;
+      this.body = body;
+    }
+
+    private byte[] toBytes() {
+      byte[] fullResponse = new byte[headers.length + body.length];
+      System.arraycopy(headers, 0, fullResponse, 0, headers.length);
+      System.arraycopy(body, 0, fullResponse, headers.length, body.length);
+      return fullResponse;
+    }
   }
 }
