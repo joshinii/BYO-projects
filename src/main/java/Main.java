@@ -43,17 +43,29 @@ public class Main {
   private static void handleClient(Socket clientSocket, String directory) {
     try {
       InputStream inputStream = clientSocket.getInputStream();
-      String requestLine = readLine(inputStream);
-      String method = getMethodFromRequestLine(requestLine);
-      String path = getPathFromRequestLine(requestLine);
-      Map<String, String> headers = readHeaders(inputStream);
-
-      RequestContext context = new RequestContext(method, path, headers, directory, inputStream);
-      Response response = buildResponse(context);
-
       OutputStream outputStream = clientSocket.getOutputStream();
-      outputStream.write(response.toBytes());
-      outputStream.flush();
+
+      while (true) {
+        String requestLine = readLine(inputStream);
+        if (requestLine == null || requestLine.isEmpty()) {
+          break;
+        }
+
+        String method = getMethodFromRequestLine(requestLine);
+        String path = getPathFromRequestLine(requestLine);
+        Map<String, String> headers = readHeaders(inputStream);
+
+        RequestContext context = new RequestContext(method, path, headers, directory, inputStream);
+        Response response = buildResponse(context);
+
+        outputStream.write(response.toBytes());
+        outputStream.flush();
+
+        if ("close".equalsIgnoreCase(headers.get("connection"))) {
+          break;
+        }
+      }
+
       clientSocket.close();
       System.out.println("accepted new connection");
     } catch (IOException e) {
