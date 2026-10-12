@@ -15,7 +15,7 @@ public class Main {
       serverSocket.setReuseAddress(true);
     
       Socket clientSocket = serverSocket.accept(); // Wait for connection from client.
-      clientSocket.getOutputStream().write("HTTP/1.1 200 OK\r\n\r\n".getBytes());
+      clientSocket.getOutputStream().write("GET /index.html HTTP/1.1\r\nHost: localhost:4221\r\nUser-Agent: curl/7.64.1\r\nAccept: */*\r\n\r\n".getBytes());
       System.out.println("accepted new connection");
     } catch (IOException e) {
       System.out.println("IOException: " + e.getMessage());
