@@ -29,7 +29,8 @@ public class Main {
 
       while (true) {
         Socket clientSocket = serverSocket.accept();
-        Thread clientThread = new Thread(() -> handleClient(clientSocket, directory));
+        final String rootDirectory = directory;
+        Thread clientThread = new Thread(() -> handleClient(clientSocket, rootDirectory));
         clientThread.start();
       }
     } catch (IOException e) {
