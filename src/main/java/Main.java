@@ -25,6 +25,7 @@ public class Main {
 
         String status = "404 Not Found";
         String responseBody = "";
+        String userAgent = "";
 
         if (requestLine != null) {
           String[] parts = requestLine.split(" ");
@@ -35,8 +36,21 @@ public class Main {
             } else if (path.startsWith("/echo/")) {
               status = "200 OK";
               responseBody = path.substring("/echo/".length());
+            } else if ("/user-agent".equals(path)) {
+              status = "200 OK";
             }
           }
+        }
+
+        if ("/user-agent".equals(getPathFromRequestLine(requestLine))) {
+          String line;
+          while ((line = reader.readLine()) != null && !line.isEmpty()) {
+            if (line.startsWith("User-Agent:")) {
+              userAgent = line.substring("User-Agent:".length()).trim();
+              break;
+            }
+          }
+          responseBody = userAgent;
         }
 
         byte[] bodyBytes = responseBody.getBytes(StandardCharsets.UTF_8);
@@ -54,5 +68,16 @@ public class Main {
     } catch (IOException e) {
       System.out.println("IOException: " + e.getMessage());
     }
+  }
+
+  private static String getPathFromRequestLine(String requestLine) {
+    if (requestLine == null) {
+      return "";
+    }
+    String[] parts = requestLine.split(" ");
+    if (parts.length >= 2) {
+      return parts[1];
+    }
+    return "";
   }
 }
